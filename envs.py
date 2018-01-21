@@ -6,6 +6,16 @@ from scipy import stats
 class MultiArmedBandit(MDP):
     def __init__(self, param=0):
         self.param = param
+        self.transition_probs = [[[0., 0.2, 0.8],
+                                  [0., 0.18, 0.82],
+                                  [0., 0.14, 0.86],
+                                  [0., 0., 1.]],
+                                 [[0., 0.2, 0.8],
+                                  [0., 0.5, 0.5],
+                                  [0., 0.66, 0.34],
+                                  [0., 1., 0.]]]
+        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(3), probs), seed=None) for probs in p] for p in self.transition_probs]
+        self.gamma = 1.0
 
     # reset environment and return s0
     def reset(self):
@@ -13,26 +23,26 @@ class MultiArmedBandit(MDP):
 
     # return a scipy.stats like distribution p(sp|s,a)
     def transition_func(self, s, a):
-        probs = [1., 0., 0.]
-        if a == 0:
-            probs = [0., 0.2, 0.8]
-        elif a == 1:
-            if self.param == 0:
-                probs = [0., 0.18, 0.82]
-            elif self.param == 1:
-                probs = [0., 0.5, 0.5]
-        elif a == 2:
-            if self.param == 0:
-                probs = [0., 0.14, 0.86]
-            elif self.param == 1:
-                probs = [0., 0.66, 0.34]
-        elif a == 3:
-            if self.param == 0:
-                probs = [0., 0., 1.]
-            elif self.param == 1:
-                probs = [0., 1., 0.]
+        # probs = [1., 0., 0.]
+        # if a == 0:
+        #     probs = [0., 0.2, 0.8]
+        # elif a == 1:
+        #     if self.param == 0:
+        #         probs = [0., 0.18, 0.82]
+        #     elif self.param == 1:
+        #         probs = [0., 0.5, 0.5]
+        # elif a == 2:
+        #     if self.param == 0:
+        #         probs = [0., 0.14, 0.86]
+        #     elif self.param == 1:
+        #         probs = [0., 0.66, 0.34]
+        # elif a == 3:
+        #     if self.param == 0:
+        #         probs = [0., 0., 1.]
+        #     elif self.param == 1:
+        #         probs = [0., 1., 0.]
 
-        return stats.rv_discrete(name='Tsa', values=(self.state_space, probs), seed=None)
+        return np.arange(3), self.trans_dists[self.param][a]
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
@@ -44,204 +54,12 @@ class MultiArmedBandit(MDP):
         return s != 0
 
     # return a list of all the states of the MDP
-    @property
     def state_space(self):
         return [0,1,2]
 
     # return a list of all the actions in the MDP
-    @property
-    def action_space(self):
+    def action_space(self,s):
         return [0,1,2,3]
-
-class GridWorldTricky(MDP):
-    def __init__(self, param=0):
-        self.param = param
-        #self.terminal_set = Set([-1, 6, 12, 18])
-        self.terminal_set = set([-1, 4,5,6, 11,12,13, 18,19,20])
-
-    def s_to_xy(self, s):
-        return (s % 7, int(s / 7))
-
-    def xy_to_s(self, x, y):
-        if x < 0 or x >= 7:
-            return -1
-        if y < 0 or y >= 7:
-            return -1
-        return 7*y + x
-
-    # reset environment and return s0
-    def reset(self):
-        return self.xy_to_s(3,3)
-
-    # return a scipy.stats like distribution p(sp|s,a)
-    def transition_func(self, s, a):
-        x,y = self.s_to_xy(s)
-        xp = []
-        yp = []
-        w = []
-        if a == 0: # UP
-            xp = [x]
-            yp = [y+1]
-            w = [1.]
-        elif a == 1: # RIGHT
-            xp = [x+(self.param+1)]
-            yp = [y]
-            w = [1.]
-        elif a == 2: # DOWN
-            xp = [x]
-            yp = [y-1]
-            w = [1.]
-        elif a == 3: # LEFT
-            xp = [x-(self.param+1)]
-            yp = [y]
-            w = [1.]
-
-        sp_v = [self.xy_to_s(x_,y_) for (x_,y_) in zip(xp, yp)]
-
-        # combine duplicate off-map states
-        filtered_sp_v = [-1]
-        filtered_w = [0.]
-        for i in range(len(sp_v)):
-            if sp_v[i] == -1:
-                filtered_w[0] += w[i]
-            else:
-                filtered_sp_v.append(sp_v[i])
-                filtered_w.append(w[i])
-
-        return stats.rv_discrete(name='Tsa', values=(filtered_sp_v, filtered_w), seed=None)
-
-    # return the reward r(s,a,sp)
-    def reward_func(self, s, a, sp):
-        if sp == -1:
-            return -1
-        h = 1.
-        l = 0.2
-        reward = [-h, -h, -h,  0, -h, -h, +h, \
-                  -h, -h, -h,  0, -h, +h, -h, \
-                  -h, -h, -h,  0, +h, -h, -h, \
-                  -l, -l, -l,  0, -l, -l, -l, \
-                  -l, -l,  0,  0,  0, -l, -l, \
-                  -l,  0,  0,  0,  0,  0, -l, \
-                   0,  0,  0,  0,  0,  0,  0]
-
-        return reward[sp]
-
-    # return whether or not the current state is a terminal state
-    def done(self, s):
-        return s in self.terminal_set
-
-    # return a list of all the states of the MDP
-    @property
-    def state_space(self):
-        return np.arange(7*7)
-
-    # return a list of all the actions in the MDP
-    @property
-    def action_space(self):
-        return np.arange(4)
-
-    def render(self, s):
-        for st in self.state_space:
-            if st == s:
-                print(".", end='')
-            else:
-                print("@", end='')
-            if st % 7 == 6:
-                print("")
-
-class GridWorld(MDP):
-    def __init__(self, param=0):
-        self.param = param
-        #self.terminal_set = Set([-1, 6, 12, 18])
-        self.terminal_set = { -1, 3,4, 8,9, 13,14 }
-
-    def s_to_xy(self, s):
-        return (s % 5, int(s / 5))
-
-    def xy_to_s(self, x, y):
-        if x < 0 or x >= 5:
-            return -1
-        if y < 0 or y >= 3:
-            return -1
-        return 5*y + x
-
-    # reset environment and return s0
-    def reset(self):
-        return self.xy_to_s(0,2)
-
-    # return a scipy.stats like distribution p(sp|s,a)
-    def transition_func(self, s, a):
-        x,y = self.s_to_xy(s)
-        xp = []
-        yp = []
-        w = []
-        if a == 0: # UP
-            xp = [x]
-            yp = [y+1]
-            w = [1.]
-        elif a == 1: # RIGHT
-            xp = [x+(self.param+1)]
-            yp = [y]
-            w = [1.]
-        elif a == 2: # DOWN
-            xp = [x]
-            yp = [y-1]
-            w = [1.]
-        elif a == 3: # LEFT
-            xp = [x-(self.param+1)]
-            yp = [y]
-            w = [1.]
-
-        sp_v = [self.xy_to_s(x_,y_) for (x_,y_) in zip(xp, yp)]
-
-        # combine duplicate off-map states
-        filtered_sp_v = [-1]
-        filtered_w = [0.]
-        for i in range(len(sp_v)):
-            if sp_v[i] == -1:
-                filtered_w[0] += w[i]
-            else:
-                filtered_sp_v.append(sp_v[i])
-                filtered_w.append(w[i])
-
-        return stats.rv_discrete(name='Tsa', values=(filtered_sp_v, filtered_w), seed=None)
-
-    # return the reward r(s,a,sp)
-    def reward_func(self, s, a, sp):
-        if sp == -1:
-            return -1
-        h = 1.
-        m = 0.8
-        l = 0.1
-        reward = [-l, -l, -l, +h, +h, \
-                  -l, -l, -m, +h, +h, \
-                  -l, -m, -m, +h, +h]
-
-        return reward[sp]
-
-    # return whether or not the current state is a terminal state
-    def done(self, s):
-        return s in self.terminal_set
-
-    # return a list of all the states of the MDP
-    @property
-    def state_space(self):
-        return np.arange(5*3)
-
-    # return a list of all the actions in the MDP
-    @property
-    def action_space(self):
-        return np.arange(4)
-
-    def render(self, s):
-        for st in self.state_space:
-            if st == s:
-                print(".", end='')
-            else:
-                print("@", end='')
-            if st % 5 == 4:
-                print("")
-
 
 class LavaGoalOneD(MDP):
     def __init__(self, param=0):
@@ -267,6 +85,8 @@ class LavaGoalOneD(MDP):
                                    [0, 0, 0, 0.5, 0.5],
                                    [0.5, 0.5, 0, 0, 0],
                                    [0, 0.5, 0.5, 0, 0]] ]
+        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(5),w), seed=None) for w in p] for p in self.transition_probs]
+        self.gamma = 0.9
 
 
     # reset environment and return s0
@@ -275,9 +95,8 @@ class LavaGoalOneD(MDP):
 
     # return a scipy.stats like distribution p(sp|s,a)
     def transition_func(self, s, a):
-        sp = [max(0,min(6,s+k)) for k in [-2,-1,0,1,2]]
-        w = self.transition_probs[self.param][a]
-        return stats.rv_discrete(name='Tsa', values=(sp, w), seed=None)
+        sp = np.array([max(0,min(6,s+k)) for k in [-2,-1,0,1,2]])
+        return (sp, self.trans_dists[self.param][a])
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
@@ -296,10 +115,58 @@ class LavaGoalOneD(MDP):
         return np.arange(7)
 
     # return a list of all the actions in the MDP
-    @property
-    def action_space(self):
+    def action_space(self,s):
         return np.arange(4)
 
     def render(self, s):
         string = "X-----G"
         print(string[:s] + "*" + string[s+1:])
+
+class Inventory(MDP):
+    def __init__(self, param=0):
+        self.K = 4 # fixed cost of ordering
+        self.c = 2 # variable cost of ordering
+        self.h = lambda n: max(n, -3*n) # cost of holding n units
+        self.f = lambda n: 8*n # revenue from selling n units
+        self.demands = np.arange(5)
+        # self.demand_models = [[0.25, 0.5, 0.25, 0., 0.],
+        #                       [0.1, 0.1, 0.5, 0.3, 0.],
+        #                       [0, 0.1, 0.3, 0.3, 0.3],
+        #                       [0, 0.1, 0.2, 0.2, 0.5]]
+        self.demand_models = [[0.25, 0.5, 0.25, 0., 0.],
+                              [0.25, 0.5, 0.25, 0., 0.],
+                              [0.25, 0.5, 0.25, 0., 0.],
+                              [0.25, 0.5, 0.25, 0., 0.]]
+        self.trans_dists = [stats.rv_discrete(name='Tsa', values=(np.arange(5),w), seed=None) for w in self.demand_models]
+        self.param = param
+        self.gamma = 0.7
+        self.M = 5
+
+    # reset environment and return s0
+    def reset(self):
+        return 0
+
+    # return a scipy.stats like distribution p(sp|s,a)
+    def transition_func(self, s, a):
+        sp = [min(s+a-d,self.M) for d in self.demands]
+        return (sp, self.trans_dists[self.param])
+
+    # return the reward r(s,a,sp)
+    def reward_func(self, s, a, sp):
+        order_cost = 0
+        if a > 0:
+            order_cost = self.K + self.c*a;
+        holding_cost = self.h(s+a)
+        revenue = self.f(min(s+a - sp, s+a))
+        return revenue - holding_cost - order_cost
+
+    # return if s is terminal
+    def done(self, s):
+        return False
+
+    # return a list of all the actions in the MDP
+    def action_space(self,s):
+        return np.arange(self.M-s)
+
+    def render(self, s, a=0):
+        print("Inventory:", s, "\tAction:", a)

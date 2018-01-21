@@ -11,7 +11,7 @@ class Env(object):
         s0 = self.mdp.reset()
         self.agent.MCTS(s0)
         for i in range(n_rollouts):
-            self.agent.reset()
+            # self.agent.reset()
             s0 = self.mdp.reset()
             s = s0
             h = (s0,)
@@ -19,6 +19,7 @@ class Env(object):
             self.logger.init_episode()
             while (not self.mdp.done(s)) and t < self.agent.max_depth:
                 a = self.agent.avg_action(h)
+                #a = self.agent.action(s)
                 r,sp = self.mdp.step(s,a)
                 self.agent.observe(s,a,r,sp)
                 self.logger.log_transition(s,a,r,sp)
@@ -29,13 +30,14 @@ class Env(object):
             if render:
                 self.mdp.render(s0)
                 for row in self.logger.trajectories[-1]:
-                    self.mdp.render(row[3])
+                    self.mdp.render(row[3], row[1])
 
         self.logger.process()
         return self.logger
 
 class MDP(object):
     def __init__(self):
+        self.gamma = 0.9
         pass
 
     def reset(self):
@@ -43,8 +45,8 @@ class MDP(object):
 
     # return r, sp after taking action a from state s
     def step(self,s,a):
-        sp_dist = self.transition_func(s,a)
-        sp = sp_dist.rvs()
+        sp_list, sp_dist = self.transition_func(s,a)
+        sp = sp_list[sp_dist.rvs()]
         r = self.reward_func(s,a,sp)
         return r, sp
 
@@ -63,7 +65,7 @@ class MDP(object):
     # return a list of all the states of the MDP
     @property
     def state_space(self):
-        raise NotImplementedError
+        return []
 
     # return a list of all the actions in the MDP
     @property
@@ -74,7 +76,7 @@ class MDP(object):
         pass
 
 class Agent(object):
-    def __init__(self, state_space, action_space):
+    def __init__(self):
         pass
 
     def reset(self):
