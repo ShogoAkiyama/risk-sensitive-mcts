@@ -19,14 +19,13 @@ class RiskAverseMCTS(Agent):
 
         self.adversarial_belief = np.array(belief) # current best response to the avg performance of the MCTS policy
         self.adversarial_belief_avg = np.array(belief) # avg of past best responses
-        self.mixed_strategy_belief = np.array(belief)
-        self.adversarial_dist = rv_discrete(values=(np.arange(self.n_mdps), self.mixed_strategy_belief))
+        self.adv_mixed_strategy = np.array(belief)
 
         self.gamma = mdps[0].gamma # discount factor extracted from MDP 0
 
         # The search tree is really just a dictionary, indexed by tuples (s0,a0,s1,a1,...)
-        self.Nh = {} # index ends in a state
-        self.Nha = {} # index ends in an action
+        self.Wh = {} # index ends in a state
+        self.Wha = {} # index ends in an action
         self.Qha = {} # index ends in an action
 
         self.model_values = np.zeros(self.n_mdps) # avg performance of the agent under each model
@@ -45,7 +44,7 @@ class RiskAverseMCTS(Agent):
         self.eta_agent = 0.1 # the changes to the UCB policy are fairly smooth, so perhaps this is not necessary / can be higher?
 
         self.alpha = alpha # CVaR alpha
-        self.K = 10 # number of tree updates and model rollouts per adversarial belief update.
+        self.K = 100 # number of tree updates and model rollouts per adversarial belief update.
 
         self.n_iter = n_iter # number of adversarial belief updates to run the algorithm for
 
@@ -57,9 +56,10 @@ class RiskAverseMCTS(Agent):
     def reset_tree(self):
         self.N_belief_updates = 0
         self.adversarial_belief = np.array(self.orig_belief)
-        self.adversarial_dist = rv_discrete(values=(np.arange(self.n_mdps), self.adversarial_belief))
-        self.Nh = {}
-        self.Nha = {}
+        self.adv_mixed_strategy = np.array(self.orig_belief)
+
+        self.Wh = {}
+        self.Wha = {}
         self.Qha = {}
         self.model_values = np.zeros(self.n_mdps)
         self.model_counts = self.laplace_smoothing*np.ones(self.n_mdps)
@@ -105,21 +105,18 @@ class RiskAverseMCTS(Agent):
 
         for itr in range(self.n_iter):
             for k in range(self.K):
-                mdp_i = self.adversarial_dist.rvs() # sample an MDP
-                R = self.simulate( (s,), mdp_i, 0 ) # simulate on that MDP, growing the tree in the process
-
-                # TODO: decide whether to update model value estimates while building the tree or separately
-                # self.model_counts[mdp_i] += 1
-                # self.model_values[mdp_i] += (R - self.model_values[mdp_i])/self.model_counts[mdp_i]
-
-                # collect performance on each mdp purely to update statistics for self.model_values
+                # rng_state = np.random.get_state()
                 for mdp_i in range(self.n_mdps):
-                    R = self.simulate( (s,), mdp_i, 0, update_tree=False)
+                    # np.random.set_state(rng_state)
+                    w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
+
+                    R = self.simulate( (s,), mdp_i, 0, w=w ) # simulate on that MDP, growing the tree in the process
+
                     self.model_counts[mdp_i] += 1
                     self.model_values[mdp_i] += (R - self.model_values[mdp_i])/self.model_counts[mdp_i]
 
             # record current statistics for stats purposes
-            self.adv_dists.append(deepcopy(self.mixed_strategy_belief))
+            self.adv_dists.append(deepcopy(self.adv_mixed_strategy))
             value = np.max([self.Qha[(s,a)] for a in self.mdps[0].action_space(s)])
             self.agent_est_value.append(value)
             self.adv_est_value.append(np.dot(self.model_values, self.adversarial_belief_avg))
@@ -157,28 +154,27 @@ class RiskAverseMCTS(Agent):
         self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
 
         # compute and set the mixed strategy
-        self.mixed_strategy_belief = (1-self.eta)*self.adversarial_belief_avg + self.eta*res.x
-        self.adversarial_dist = rv_discrete(values=(np.arange(self.n_mdps), self.mixed_strategy_belief))
+        self.adv_mixed_strategy = (1-self.eta)*self.adversarial_belief_avg + self.eta*res.x
 
     # simulate a rollout under mdp_i up to depth, adding a node and updating counts if update_tree=True
     # takes a mixed strategy when choosing actions in the constructed tree
-    def simulate(self, h, mdp_i, depth, update_tree=True):
+    def simulate(self, h, mdp_i, depth, w=1., update_tree=True):
         if depth >= self.max_depth:
             return 0
         if self.mdps[mdp_i].done(h[-1]):
             return 0
 
-        if h not in self.Nh:
+        if h not in self.Wh:
             for a in self.mdps[mdp_i].action_space(h[-1]):
-                self.Nha[h+(a,)] = 0
+                self.Wha[h+(a,)] = 0
                 self.Qha[h+(a,)] = 0
 
             a = self.sample_rollout_action(h)
             r, sp = self.mdps[mdp_i].step(h[-1], a)
             R = r + self.gamma*self.rollout(h + (a,sp), mdp_i, depth + 1)
             if update_tree:
-                self.Nh[h] = 1
-                self.Nha[h+(a,)] = 1
+                self.Wh[h] = w
+                self.Wha[h+(a,)] = w
                 self.Qha[h+(a,)] = R
             return R
 
@@ -191,9 +187,9 @@ class RiskAverseMCTS(Agent):
 
         R = r + self.gamma*self.simulate(h + (a,sp), mdp_i, depth + 1)
         if update_tree:
-            self.Nh[h] += 1
-            self.Nha[h+(a,)] += 1
-            self.Qha[h+(a,)] = self.Qha[h+(a,)] + (R - self.Qha[h+(a,)])*1./self.Nha[h+(a,)]
+            self.Wh[h] += w
+            self.Wha[h+(a,)] += w
+            self.Qha[h+(a,)] = self.Qha[h+(a,)] + w*(R - self.Qha[h+(a,)])*1./self.Wha[h+(a,)]
         return R
 
     # simulate a rollout from history h in mdp_i up to depth
@@ -219,8 +215,8 @@ class RiskAverseMCTS(Agent):
         best_val = -np.inf
         for a in self.mdps[0].action_space(h[-1]):
             val = np.inf
-            if self.Nha[h+(a,)] != 0:
-                val = self.Qha[h+(a,)] + self.c * np.sqrt(np.log(self.Nh[h])/self.Nha[h+(a,)])
+            if self.Wha[h+(a,)] != 0:
+                val = self.Qha[h+(a,)] + self.c * np.sqrt(np.log(self.Wh[h])/self.Wha[h+(a,)])
 
             if val > best_val:
                 best_val = val
@@ -230,10 +226,10 @@ class RiskAverseMCTS(Agent):
     # choose an action at history h corresponding to the historical distribution of choice
     def avg_action(self, h):
         actions = self.mdps[0].action_space(h[-1])
-        if h not in self.Nh:
+        if h not in self.Wh:
             probs = np.ones(len(actions))
         else:
-            probs = np.array( [self.Nha[h+(a,)]*1. for a in actions] )
+            probs = np.array( [self.Wha[h+(a,)]*1. for a in actions] ) # TODO: see if this still works with Wha rather than Nha
         probs = probs/np.sum(probs)
         a = np.random.choice(actions, p=probs)
         return a
