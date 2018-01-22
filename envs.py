@@ -61,6 +61,53 @@ class MultiArmedBandit(MDP):
     def action_space(self,s):
         return [0,1,2,3]
 
+class NPullBandit(MDP):
+    def __init__(self, param=0):
+        self.param = param
+        # state space: [0   1   2   3   4    5    6]
+        # rewards:      0  1.0 0.5 0.0 -0.1 -0.5 -1.0
+        self.transition_probs = [[[0., 0., 0., 1.0, 0., 0., 0.],
+                                  [0., 0., 1.0, 0., 0., 0., 0.],
+                                  [0., 0.2, 0., 0., 0., 0., 0.8],
+                                  [0., 0.8, 0., 0., 0., 0., 0.2]],
+                                 [[0., 0., 0., 0., 1.0, 0., 0.],
+                                  [0., 0., 0., 0., 0., 1.0, 0.],
+                                  [0., 0.8, 0., 0., 0., 0., 0.2],
+                                  [0., 0.2, 0., 0., 0., 0., 0.8]]]
+        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(7), probs), seed=None) for probs in p] for p in self.transition_probs]
+        self.reset_dist = stats.rv_discrete(name='Tsa', values=([0], [1.0]), seed=None)
+        self.gamma = 1.0
+
+    def reset(self):
+        return 0
+
+    # return a scipy.stats like distribution p(sp|s,a)
+    def transition_func(self, s, a):
+        if s == 0:
+            return np.arange(7), self.trans_dists[self.param][a]
+        else:
+            return np.arange(1), self.reset_dist
+
+    # return the reward r(s,a,sp)
+    def reward_func(self, s, a, sp):
+        rewards =  [0, 1.0, 0.5, 0.0, -0.1, -0.5, -1.0]
+        return rewards[sp]
+
+    # return whether or not the current state is a terminal state
+    def done(self, s):
+        return False
+
+    # return a list of all the states of the MDP
+    def state_space(self):
+        return np.arange(7)
+
+    # return a list of all the actions in the MDP
+    def action_space(self,s):
+        if s == 0:
+            return np.arange(4)
+        else:
+            return [0]
+
 class LavaGoalOneD(MDP):
     def __init__(self, param=0):
         self.param = param

@@ -15,7 +15,7 @@ class RiskAverseMCTS(Agent):
         self.orig_belief = belief # save so that we can "reset" agent
         self.belief = np.array(belief) # this one gets updated at every timestep
 
-        self.N_belief_updates = 0
+        self.N_belief_updates = 1
 
         self.adversarial_belief = np.array(belief) # current best response to the avg performance of the MCTS policy
         self.adversarial_belief_avg = np.array(belief) # avg of past best responses
@@ -24,9 +24,12 @@ class RiskAverseMCTS(Agent):
         self.gamma = mdps[0].gamma # discount factor extracted from MDP 0
 
         # The search tree is really just a dictionary, indexed by tuples (s0,a0,s1,a1,...)
-        self.Wh = {} # index ends in a state
-        self.Wha = {} # index ends in an action
-        self.Qha = {} # index ends in an action
+        # items ending in h require a index ending in a state, items with ha require an index ending in an action.
+        self.Wh = {} # total weight of simulations that visited history h
+        self.Wha = {} # total weight of simulations that visity history h and took action a
+        self.Qha = {} # weighted average of the total returns from simulations after history h and action a
+        self.children_h = {} # returns indices of the visited (ha) nodes after history h
+        self.children_ha = {} # returns indices of the visited (h) nodes after history h and action a
 
         self.model_values = np.zeros(self.n_mdps) # avg performance of the agent under each model
 
@@ -54,7 +57,7 @@ class RiskAverseMCTS(Agent):
         self.reset_tree()
 
     def reset_tree(self):
-        self.N_belief_updates = 0
+        self.N_belief_updates = 1
         self.adversarial_belief = np.array(self.orig_belief)
         self.adv_mixed_strategy = np.array(self.orig_belief)
 
@@ -139,11 +142,11 @@ class RiskAverseMCTS(Agent):
         # should we choose adversarial belief assuming the policy will do better or worse than the mean so far?
         # assuming the worst (i.e. optimism wrt the adversary) ensures exploration
         c = np.array(self.model_values)
-        for i in range(self.n_mdps):
-            if self.model_counts[i] != 0:
-                c[i] -= self.c * np.sqrt(np.log(np.sum(self.model_counts))/self.model_counts[i])
-            else:
-                c[i] = -self.max_r
+        # for i in range(self.n_mdps):
+        #     if self.model_counts[i] != 0:
+        #         c[i] -= self.c * np.sqrt(np.log(np.sum(self.model_counts))/self.model_counts[i])
+        #     else:
+        #         c[i] = -self.max_r
 
         # res = belief that minimizes the cost given a lower bound on the expected avg performance of the agent
         res = optimize.linprog(c, A, b, Aeq, beq)
@@ -165,7 +168,7 @@ class RiskAverseMCTS(Agent):
             return 0
 
         if h not in self.Wh:
-            for a in self.mdps[mdp_i].action_space(h[-1]):
+            for a in self.mdps[mdp_i].action_space(h[-1]): # TODO replace for continuous action space
                 self.Wha[h+(a,)] = 0
                 self.Qha[h+(a,)] = 0
 
@@ -183,7 +186,8 @@ class RiskAverseMCTS(Agent):
             a = self.ucb_action(h)
         else:
             a = self.avg_action(h)
-        r, sp = self.mdps[mdp_i].step(h[-1], a)
+
+        r, sp = self.mdps[mdp_i].step(h[-1], a) #TODO: replace with progressive widening for state space
 
         R = r + self.gamma*self.simulate(h + (a,sp), mdp_i, depth + 1)
         if update_tree:
