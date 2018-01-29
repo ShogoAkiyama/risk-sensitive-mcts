@@ -90,7 +90,8 @@ class NPullBandit(MDP):
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
-        rewards =  [0, 1.0, 0.5, 0.0, -0.1, -0.5, -1.0]
+        # rewards =  [0, 1.0, 0.5, 0.0, -0.1, -0.5, -1.0]
+        rewards =  [0, 2.0, 1.5, 1.0, 0.9, 0.5, 0.0]
         return rewards[sp]
 
     # return whether or not the current state is a terminal state
@@ -148,6 +149,7 @@ class LavaGoalOneD(MDP):
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
         # reward = [-2, -0.1, -0.1, -0.1, -0.1, -0.1, +1.]
+        # reward = [-2., -0.1, 0, 0.2, 0.5, 0.7, 1.0]
         reward = [-2., -0.1, 0, 0.2, 0.5, 0.7, 1.0]
 
         return reward[sp]

@@ -7,7 +7,7 @@ import numpy as np
 from copy import deepcopy
 
 class RiskAverseMCTS(Agent):
-    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200):
+    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=200):
         super(RiskAverseMCTS, self).__init__()
         self.mdps = deepcopy(mdps) # identical MDPS, with different transition distributions corresponding to the support of the belief
         self.n_mdps = len(mdps)
@@ -16,6 +16,7 @@ class RiskAverseMCTS(Agent):
         self.belief = np.array(belief) # this one gets updated at every timestep
 
         self.N_belief_updates = 1
+        self.belief_window_size = 50
 
         self.adversarial_belief = np.array(belief) # current best response to the avg performance of the MCTS policy
         self.adversarial_belief_avg = np.array(belief) # avg of past best responses
@@ -44,10 +45,10 @@ class RiskAverseMCTS(Agent):
 
         # mixing factors between best response and avg policy.
         self.eta = 0.1 # smoothing of distribution updates
-        self.eta_agent = 0.1 # the changes to the UCB policy are fairly smooth, so perhaps this is not necessary / can be higher?
+        self.eta_agent = 1.0 # the changes to the UCB policy are fairly smooth, so perhaps this is not necessary / can be higher?
 
         self.alpha = alpha # CVaR alpha
-        self.K = 100 # number of tree updates and model rollouts per adversarial belief update.
+        self.K = K # number of tree updates and model rollouts per adversarial belief update.
 
         self.n_iter = n_iter # number of adversarial belief updates to run the algorithm for
 
@@ -153,11 +154,13 @@ class RiskAverseMCTS(Agent):
 
         # set the adversarial belief
         self.adversarial_belief = res.x
-        self.N_belief_updates += 1
-        self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
 
         # compute and set the mixed strategy
         self.adv_mixed_strategy = (1-self.eta)*self.adversarial_belief_avg + self.eta*res.x
+
+        # if self.N_belief_updates < self.belief_window_size:
+        self.N_belief_updates += 1
+        self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
 
     # simulate a rollout under mdp_i up to depth, adding a node and updating counts if update_tree=True
     # takes a mixed strategy when choosing actions in the constructed tree
@@ -182,8 +185,9 @@ class RiskAverseMCTS(Agent):
             return R
 
         # a = self.smooth_ucb_action(h)
+        depth_to_go = self.max_depth - depth
         if update_tree:
-            a = self.ucb_action(h)
+            a = self.smooth_ucb_action(h, depth_to_go=depth_to_go)
         else:
             a = self.avg_action(h)
 
@@ -214,13 +218,14 @@ class RiskAverseMCTS(Agent):
         return np.random.choice(self.mdps[0].action_space(h[-1]))
 
     # choose an action at history h corresponding to the optimal UCB choice
-    def ucb_action(self, h):
+    def ucb_action(self, h, depth_to_go=1):
+        c = self.max_r*depth_to_go
         best_a = -1
         best_val = -np.inf
         for a in self.mdps[0].action_space(h[-1]):
             val = np.inf
             if self.Wha[h+(a,)] != 0:
-                val = self.Qha[h+(a,)] + self.c * np.sqrt(np.log(self.Wh[h])/self.Wha[h+(a,)])
+                val = self.Qha[h+(a,)] + c * np.sqrt(np.log(self.Wh[h])/self.Wha[h+(a,)])
 
             if val > best_val:
                 best_val = val
@@ -239,12 +244,12 @@ class RiskAverseMCTS(Agent):
         return a
 
     # perform an action at history h corresponding to a mixture of the optimal UCB action and the historical distribution
-    def smooth_ucb_action(self, h):
+    def smooth_ucb_action(self, h, depth_to_go=1):
         z = np.random.rand()
         best_a = -1
         if z < self.eta_agent:
             # return the action given by upper confidence bounds
-            return self.ucb_action(h)
+            return self.ucb_action(h, depth_to_go=depth_to_go)
         else:
             return self.avg_action(h)
 
