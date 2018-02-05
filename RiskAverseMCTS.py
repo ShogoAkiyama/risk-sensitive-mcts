@@ -7,7 +7,7 @@ import numpy as np
 from copy import deepcopy
 
 class RiskAverseMCTS(Agent):
-    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=200):
+    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=20, n_burn_in=100):
         super(RiskAverseMCTS, self).__init__()
         self.mdps = deepcopy(mdps) # identical MDPS, with different transition distributions corresponding to the support of the belief
         self.n_mdps = len(mdps)
@@ -44,18 +44,22 @@ class RiskAverseMCTS(Agent):
         self.c = max_r #max_r*max_depth + 0.0000001 # For finite horizon mdps. For infinite horizon, c > max_r/(1-gamma)
 
         # mixing factors between best response and avg policy.
-        self.eta = 0.1 # smoothing of distribution updates
+        self.eta = 1.0 # smoothing of distribution updates
         self.eta_agent = 1.0 # the changes to the UCB policy are fairly smooth, so perhaps this is not necessary / can be higher?
 
         self.alpha = alpha # CVaR alpha
         self.K = K # number of tree updates and model rollouts per adversarial belief update.
 
         self.n_iter = n_iter # number of adversarial belief updates to run the algorithm for
+        self.n_burn_in = n_burn_in # start adversarial belief updates after this many iterations
 
     # resets the agent to its state when constructed
     def reset(self):
-        self.belief = np.array(self.orig_belief)
+        self.reset_belief()
         self.reset_tree()
+
+    def reset_belief(self):
+        self.belief = np.array(self.orig_belief)
 
     def reset_tree(self):
         self.N_belief_updates = 1
@@ -102,17 +106,22 @@ class RiskAverseMCTS(Agent):
     def MCTS(self, s):
         # reset tree from previous computation?
         self.adv_dists = []
+        self.adv_brs = []
+        self.adv_avg = []
         self.agent_est_value = []
+        self.agent_Q_vals = []
         self.adv_est_value = []
 
         self.reset_tree()
 
         for itr in range(self.n_iter):
+            self.model_counts = np.zeros(self.n_mdps) # clear before every iteration
             for k in range(self.K):
-                # rng_state = np.random.get_state()
+                rng_state = np.random.get_state()
                 for mdp_i in range(self.n_mdps):
-                    # np.random.set_state(rng_state)
-                    w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
+                    np.random.set_state(rng_state)
+                    #w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
+                    w = self.adversarial_belief_avg[mdp_i]*self.n_mdps
 
                     R = self.simulate( (s,), mdp_i, 0, w=w ) # simulate on that MDP, growing the tree in the process
 
@@ -120,12 +129,18 @@ class RiskAverseMCTS(Agent):
                     self.model_values[mdp_i] += (R - self.model_values[mdp_i])/self.model_counts[mdp_i]
 
             # record current statistics for stats purposes
+            self.adv_brs.append(deepcopy(self.adversarial_belief))
             self.adv_dists.append(deepcopy(self.adv_mixed_strategy))
-            value = np.max([self.Qha[(s,a)] for a in self.mdps[0].action_space(s)])
+            self.adv_avg.append(deepcopy(self.adversarial_belief_avg))
+            qvals = [self.Qha[(s,a)] for a in self.mdps[0].action_space(s)]
+            #value = np.dot([self.Qha[(s,a)] for a in self.mdps[0].action_space(s)], [self.Wha[(s,a)] for a in self.mdps[0].action_space(s)])/self.Wh[(s,)]
+            value = np.max(qvals)
             self.agent_est_value.append(value)
+            self.agent_Q_vals.append(qvals)
             self.adv_est_value.append(np.dot(self.model_values, self.adversarial_belief_avg))
 
-            self.update_adversarial_belief()
+            if itr > self.n_burn_in:
+                self.update_adversarial_belief()
 
 
     # solve the LP to adversarially choose a belief within the risk-polytope.
@@ -160,7 +175,8 @@ class RiskAverseMCTS(Agent):
 
         # if self.N_belief_updates < self.belief_window_size:
         self.N_belief_updates += 1
-        self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
+        # self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
+        self.adversarial_belief_avg += (self.adv_mixed_strategy - self.adversarial_belief_avg)/self.N_belief_updates
 
     # simulate a rollout under mdp_i up to depth, adding a node and updating counts if update_tree=True
     # takes a mixed strategy when choosing actions in the constructed tree
@@ -230,6 +246,23 @@ class RiskAverseMCTS(Agent):
             if val > best_val:
                 best_val = val
                 best_a = a
+        return best_a
+
+    # choose an action at history h corresponding to the most visited
+    def most_visited_action(self, h, depth_to_go=1):
+        c = self.max_r*depth_to_go
+        best_a = -1
+        best_val = 0
+        for a in self.mdps[0].action_space(h[-1]):
+            val = self.Wha[h+(a,)]
+
+            if val > best_val:
+                best_val = val
+                best_a = a
+
+        if best_a == -1:
+            best_a = self.sample_rollout_action(h)
+
         return best_a
 
     # choose an action at history h corresponding to the historical distribution of choice
