@@ -1,48 +1,27 @@
 from __future__ import print_function
 from common import *
-from scipy import stats
 #from sets import Set
 
 class MultiArmedBandit(MDP):
     def __init__(self, param=0):
         self.param = param
-        self.transition_probs = [[[0., 0.2, 0.8],
-                                  [0., 0.18, 0.82],
-                                  [0., 0.14, 0.86],
-                                  [0., 0., 1.]],
-                                 [[0., 0.2, 0.8],
-                                  [0., 0.5, 0.5],
-                                  [0., 0.66, 0.34],
-                                  [0., 1., 0.]]]
-        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(3), probs), seed=None) for probs in p] for p in self.transition_probs]
+        self.transition_probs = np.array([[[0., 0.2, 0.8],
+                                          [0., 0.18, 0.82],
+                                          [0., 0.14, 0.86],
+                                          [0., 0., 1.]],
+                                         [[0., 0.2, 0.8],
+                                          [0., 0.5, 0.5],
+                                          [0., 0.66, 0.34],
+                                          [0., 1., 0.]]] )
         self.gamma = 1.0
 
     # reset environment and return s0
     def reset(self):
         return 0
 
-    # return a scipy.stats like distribution p(sp|s,a)
+    # return a list of states and transition probabilities, as NP arrays
     def transition_func(self, s, a):
-        # probs = [1., 0., 0.]
-        # if a == 0:
-        #     probs = [0., 0.2, 0.8]
-        # elif a == 1:
-        #     if self.param == 0:
-        #         probs = [0., 0.18, 0.82]
-        #     elif self.param == 1:
-        #         probs = [0., 0.5, 0.5]
-        # elif a == 2:
-        #     if self.param == 0:
-        #         probs = [0., 0.14, 0.86]
-        #     elif self.param == 1:
-        #         probs = [0., 0.66, 0.34]
-        # elif a == 3:
-        #     if self.param == 0:
-        #         probs = [0., 0., 1.]
-        #     elif self.param == 1:
-        #         probs = [0., 1., 0.]
-
-        return np.arange(3), self.trans_dists[self.param][a]
+        return np.arange(3), self.transition_probs[self.param][a]
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
@@ -66,31 +45,28 @@ class NPullBandit(MDP):
         self.param = param
         # state space: [0   1   2   3   4    5    6]
         # rewards:      0  1.0 0.5 0.0 -0.1 -0.5 -1.0
-        self.transition_probs = [[[0., 0., 0., 1.0, 0., 0., 0.],
-                                  [0., 0., 1.0, 0., 0., 0., 0.],
-                                  [0., 0.2, 0., 0., 0., 0., 0.8],
-                                  [0., 0.8, 0., 0., 0., 0., 0.2]],
-                                 [[0., 0., 0., 0., 1.0, 0., 0.],
-                                  [0., 0., 0., 0., 0., 1.0, 0.],
-                                  [0., 0.8, 0., 0., 0., 0., 0.2],
-                                  [0., 0.2, 0., 0., 0., 0., 0.8]]]
-        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(7), probs), seed=None) for probs in p] for p in self.transition_probs]
-        self.reset_dist = stats.rv_discrete(name='Tsa', values=([0], [1.0]), seed=None)
+        self.transition_probs = np.array( [[[0., 0., 0., 1.0, 0., 0., 0.],
+                                              [0., 0., 1.0, 0., 0., 0., 0.],
+                                              [0., 0.2, 0., 0., 0., 0., 0.8],
+                                              [0., 0.8, 0., 0., 0., 0., 0.2]],
+                                             [[0., 0., 0., 0., 1.0, 0., 0.],
+                                              [0., 0., 0., 0., 0., 1.0, 0.],
+                                              [0., 0.8, 0., 0., 0., 0., 0.2],
+                                              [0., 0.2, 0., 0., 0., 0., 0.8]]] )
         self.gamma = 1.0
 
     def reset(self):
         return 0
 
-    # return a scipy.stats like distribution p(sp|s,a)
+    # return a list of states and transition probabilities, as NP arrays
     def transition_func(self, s, a):
         if s == 0:
-            return np.arange(7), self.trans_dists[self.param][a]
+            return np.arange(7), self.transition_probs[self.param][a]
         else:
-            return np.arange(1), self.reset_dist
+            return np.arange(1), np.array([1.0])
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
-        # rewards =  [0, 1.0, 0.5, 0.0, -0.1, -0.5, -1.0]
         rewards =  [0, 2.0, 1.5, 1.0, 0.9, 0.5, 0.0]
         return rewards[sp]
 
@@ -117,23 +93,22 @@ class LavaGoalOneD(MDP):
         # each 2d array corresponds to a given parameter setting
         # each columnn corresponds to moving [-2, -1, 0, 1, 2]
         # each row corresponds to probs under every action
-        self.transition_probs = [ [[0.9, 0.1, 0, 0, 0],
-                                   [0, 0.9, 0.1, 0, 0],
-                                   [0, 0, 0.1, 0.9, 0],
-                                   [0, 0, 0, 0.1, 0.9]],
-                                  [[0, 0.5, 0.5, 0, 0],
-                                   [0.5, 0.5, 0, 0, 0],
-                                   [0, 0, 0, 0.5, 0.5],
-                                   [0, 0, 0.5, 0.5, 0]],
-                                  [[0, 0, 0, 0.1, 0.9],
-                                   [0, 0, 0.1, 0.9, 0],
-                                   [0, 0.9, 0.1, 0, 0],
-                                   [0.9, 0.1, 0, 0, 0]],
-                                  [[0, 0, 0.5, 0.5, 0],
-                                   [0, 0, 0, 0.5, 0.5],
-                                   [0.5, 0.5, 0, 0, 0],
-                                   [0, 0.5, 0.5, 0, 0]] ]
-        self.trans_dists = [[stats.rv_discrete(name='Tsa', values=(np.arange(5),w), seed=None) for w in p] for p in self.transition_probs]
+        self.transition_probs = np.array( [ [[0.9, 0.1, 0, 0, 0],
+                                           [0, 0.9, 0.1, 0, 0],
+                                           [0, 0, 0.1, 0.9, 0],
+                                           [0, 0, 0, 0.1, 0.9]],
+                                          [[0, 0.5, 0.5, 0, 0],
+                                           [0.5, 0.5, 0, 0, 0],
+                                           [0, 0, 0, 0.5, 0.5],
+                                           [0, 0, 0.5, 0.5, 0]],
+                                          [[0, 0, 0, 0.1, 0.9],
+                                           [0, 0, 0.1, 0.9, 0],
+                                           [0, 0.9, 0.1, 0, 0],
+                                           [0.9, 0.1, 0, 0, 0]],
+                                          [[0, 0, 0.5, 0.5, 0],
+                                           [0, 0, 0, 0.5, 0.5],
+                                           [0.5, 0.5, 0, 0, 0],
+                                           [0, 0.5, 0.5, 0, 0]] ] )
         self.gamma = 0.9
 
 
@@ -141,10 +116,10 @@ class LavaGoalOneD(MDP):
     def reset(self):
         return 2
 
-    # return a scipy.stats like distribution p(sp|s,a)
+    # return a list of states and transition probabilities, as NP arrays
     def transition_func(self, s, a):
         sp = np.array([max(0,min(6,s+k)) for k in [-2,-1,0,1,2]])
-        return (sp, self.trans_dists[self.param][a])
+        return (sp, self.transition_probs[self.param][a])
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):
@@ -182,11 +157,10 @@ class Inventory(MDP):
         #                       [0.1, 0.1, 0.5, 0.3, 0.],
         #                       [0, 0.1, 0.3, 0.3, 0.3],
         #                       [0, 0.1, 0.2, 0.2, 0.5]]
-        self.demand_models = [[0.25, 0.5, 0.25, 0., 0.],
-                              [0.25, 0.5, 0.25, 0., 0.],
-                              [0.25, 0.5, 0.25, 0., 0.],
-                              [0.25, 0.5, 0.25, 0., 0.]]
-        self.trans_dists = [stats.rv_discrete(name='Tsa', values=(np.arange(5),w), seed=None) for w in self.demand_models]
+        self.demand_models = np.array( [[0.25, 0.5, 0.25, 0., 0.],
+                                      [0.25, 0.5, 0.25, 0., 0.],
+                                      [0.25, 0.5, 0.25, 0., 0.],
+                                      [0.25, 0.5, 0.25, 0., 0.]] )
         self.param = param
         self.gamma = 0.7
         self.M = 5
@@ -195,10 +169,10 @@ class Inventory(MDP):
     def reset(self):
         return 0
 
-    # return a scipy.stats like distribution p(sp|s,a)
+    # return a list of states and transition probabilities, as NP arrays
     def transition_func(self, s, a):
         sp = [min(s+a-d,self.M) for d in self.demands]
-        return (sp, self.trans_dists[self.param])
+        return (sp, self.demand_models[self.param])
 
     # return the reward r(s,a,sp)
     def reward_func(self, s, a, sp):

@@ -95,8 +95,8 @@ class RiskAverseMCTS(Agent):
         probs = np.zeros(self.n_mdps)
         for i, mdp in enumerate(self.mdps):
             sp_list, sp_dist = mdp.transition_func(s,a)
-            idx = np.nonzero(sp_list == sp)[0][0]
-            probs[i] = sp_dist.pmf(idx)
+            #idx = np.nonzero(sp_list == sp)[0][0]
+            probs[i] = sp_dist[sp_list == sp]#sp_dist.pmf(idx)
 
         belief = self.belief*probs
         self.belief = belief/np.sum(belief)

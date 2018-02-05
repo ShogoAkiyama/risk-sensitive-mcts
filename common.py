@@ -46,11 +46,11 @@ class MDP(object):
     # return r, sp after taking action a from state s
     def step(self,s,a):
         sp_list, sp_dist = self.transition_func(s,a)
-        sp = sp_list[sp_dist.rvs()]
+        sp = int(np.random.choice(sp_list, 1, p=sp_dist))
         r = self.reward_func(s,a,sp)
         return r, sp
 
-    # return a scipy.stats like distribution p(sp|s,a)
+    # return a tuple of (next_states, probabilities)
     def transition_func(self, s, a):
         raise NotImplementedError
 
