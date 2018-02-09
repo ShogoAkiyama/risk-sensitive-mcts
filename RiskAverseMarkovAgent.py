@@ -6,9 +6,9 @@ import scipy.linalg as la
 import numpy as np
 from copy import deepcopy
 
-class RiskAverseMCTS(Agent):
-    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=20, n_burn_in=100):
-        super(RiskAverseMCTS, self).__init__()
+class RiskAverseMarkovAgent(Agent):
+    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=20, n_burn_in=0, c=10):
+        super(RiskAverseMarkovAgent, self).__init__()
         self.mdps = deepcopy(mdps) # identical MDPS, with different transition distributions corresponding to the support of the belief
         self.n_mdps = len(mdps)
 
@@ -16,7 +16,6 @@ class RiskAverseMCTS(Agent):
         self.belief = np.array(belief) # this one gets updated at every timestep
 
         self.N_belief_updates = 1
-        self.belief_window_size = 50
 
         self.adversarial_belief = np.array(belief) # current best response to the avg performance of the MCTS policy
         self.adversarial_belief_avg = np.array(belief) # avg of past best responses
@@ -24,13 +23,13 @@ class RiskAverseMCTS(Agent):
 
         self.gamma = mdps[0].gamma # discount factor extracted from MDP 0
 
-        # The search tree is really just a dictionary, indexed by tuples (s0,a0,s1,a1,...)
+        # The search tree is really just a dictionary, indexed by tuples (s,t) or (s,t,a)
         # items ending in h require a index ending in a state, items with ha require an index ending in an action.
-        self.Wh = {} # total weight of simulations that visited history h
-        self.Wha = {} # total weight of simulations that visity history h and took action a
-        self.Qha = {} # weighted average of the total returns from simulations after history h and action a
-        self.children_h = {} # returns indices of the visited (ha) nodes after history h
-        self.children_ha = {} # returns indices of the visited (h) nodes after history h and action a
+        self.Wst = {} # total weight of simulations that visited state s at depth t
+        self.Vst = {} # estimated value of state s and time t
+        self.Wsta = {} # total weight of simulations that visity history h and took action a
+        self.Wsta_br = {} # weighted number of times that action a was the best response at history h at iteration k
+        self.Qsta = {} # weighted average of the total returns from simulations after history h and action a
 
         self.model_values = np.zeros(self.n_mdps) # avg performance of the agent under each model
 
@@ -39,9 +38,7 @@ class RiskAverseMCTS(Agent):
 
         self.max_depth = max_depth # maximum depth of the search tree
 
-        # Compute the constant factor for the UCB bonus. Should be greater than the max reward possible
-        self.max_r = max_r
-        self.c = max_r #max_r*max_depth + 0.0000001 # For finite horizon mdps. For infinite horizon, c > max_r/(1-gamma)
+        self.c = c # width of sampling at each transition node per model
 
         # mixing factors between best response and avg policy.
         self.eta = 1.0 # smoothing of distribution updates
@@ -66,19 +63,20 @@ class RiskAverseMCTS(Agent):
         self.adversarial_belief = np.array(self.orig_belief)
         self.adv_mixed_strategy = np.array(self.orig_belief)
 
-        self.Wh = {}
-        self.Wha = {}
-        self.Qha = {}
+        self.Wst = {}
+        self.Vst = {}
+        self.Wsat = {}
+        self.Qsat = {}
         self.model_values = np.zeros(self.n_mdps)
         self.model_counts = self.laplace_smoothing*np.ones(self.n_mdps)
 
     # run the search to choose the best action
     def action(self, s):
-        self.MCTS(s)
+        self.SparseSampling(s)
         bestq = -np.inf
         besta = -1
         for a in self.mdps[0].action_space(s):
-            qval = self.Qha[(s,a)]
+            qval = self.Qsa[(s,a)]
             if qval > bestq:
                 bestq = qval
                 besta = a
@@ -87,7 +85,7 @@ class RiskAverseMCTS(Agent):
         # return self.avg_action((s,))
 
     def plan(self, s):
-        self.MCTS(s)
+        self.SparseSampling(s)
 
     # observe a transition, update belief over mdps
     def observe(self, s, a, r, sp):
@@ -106,7 +104,7 @@ class RiskAverseMCTS(Agent):
         self.adversarial_belief = deepcopy(self.belief)
 
     # build the tree from state s
-    def MCTS(self, s):
+    def SparseSampling(self, s):
         # reset tree from previous computation?
         self.adv_dists = []
         self.adv_brs = []
@@ -120,30 +118,26 @@ class RiskAverseMCTS(Agent):
 
         for itr in range(self.n_iter):
             #self.model_counts = np.zeros(self.n_mdps) # clear before every iteration
+            self.epsilon = 0.0 #0.9**(itr*50.0/self.n_iter)
             for k in range(self.K):
                 rng_state = np.random.get_state()
                 for mdp_i in range(self.n_mdps):
                     np.random.set_state(rng_state)
-                    w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
+                    #w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
                     # playing the best response means the value estimates need not converge
                     #w = self.adversarial_belief_avg[mdp_i]*self.n_mdps
-                    #w = self.adversarial_belief[mdp_i]*self.n_mdps
-
-                    R = self.simulate( (s,), mdp_i, 0, w=w ) # simulate on that MDP, growing the tree in the process
+                    w = self.adversarial_belief[mdp_i]*self.n_mdps
+                    V_est, V_br_eps = self.estimateV( (s,0), mdp_i, 0, self.c, w=w ) # simulate on that MDP, growing the tree in the process
 
                     self.model_counts[mdp_i] += 1
-                    self.model_values[mdp_i] += (R - self.model_values[mdp_i])/self.model_counts[mdp_i]
+                    self.model_values[mdp_i] += (V_br_eps - self.model_values[mdp_i])/self.model_counts[mdp_i]
 
             # record current statistics for stats purposes
             self.adv_brs.append(deepcopy(self.adversarial_belief))
             self.adv_dists.append(deepcopy(self.adv_mixed_strategy))
             self.adv_avg.append(deepcopy(self.adversarial_belief_avg))
-            qvals = [self.Qha[(s,a)] for a in self.mdps[0].action_space(s)]
-            nvals = [self.Wha[(s,a)] for a in self.mdps[0].action_space(s)]
-            #value = np.dot([self.Qha[(s,a)] for a in self.mdps[0].action_space(s)], [self.Wha[(s,a)] for a in self.mdps[0].action_space(s)])/self.Wh[(s,)]
-            a_robust = np.argmax(nvals)
-            value = qvals[a_robust]
-            self.agent_est_value.append(value)
+            qvals = [self.Qsta[(s,0,a)] for a in self.mdps[0].action_space(s)]
+            self.agent_est_value.append(self.Vst[(s,0)])
             self.agent_Q_vals.append(qvals)
             self.adv_est_value.append(np.dot(self.model_values, self.adversarial_belief_avg))
             self.model_value_history.append(deepcopy(self.model_values))
@@ -188,113 +182,114 @@ class RiskAverseMCTS(Agent):
 
     # simulate a rollout under mdp_i up to depth, adding a node and updating counts if update_tree=True
     # takes a mixed strategy when choosing actions in the constructed tree
-    def simulate(self, h, mdp_i, depth, w=1., update_tree=True):
+    def estimateV(self, st, mdp_i, depth, c, w=1., update_tree=True):
         if depth >= self.max_depth:
-            return 0
-        if self.mdps[mdp_i].done(h[-1]):
-            return 0
+            return 0,0
+        if self.mdps[mdp_i].done(st[0]):
+            return 0,0
 
-        if h not in self.Wh:
-            for a in self.mdps[mdp_i].action_space(h[-1]): # TODO replace for continuous action space
-                self.Wha[h+(a,)] = 0
-                self.Qha[h+(a,)] = 0
+        if st not in self.Wst:
+            self.Wst[st] = 0
+            self.Vst[st] = 0
 
-            a = self.sample_rollout_action(h)
-            r, sp = self.mdps[mdp_i].step(h[-1], a)
-            R = r + self.gamma*self.rollout(h + (a,sp), mdp_i, depth + 1)
-            if update_tree and w > 0:
-                self.Wh[h] = w
-                self.Wha[h+(a,)] = w
-                self.Qha[h+(a,)] = R
-            return R
+        Qsta_est, Qsta_br_eps = self.estimateQ(st, mdp_i, depth, c, w, update_tree)
+        a_star = self.greedy_action(st)
+        a_eps_greedy = a_star
+        if np.random.rand() < self.epsilon:
+            a_eps_greedy = self.sample_rollout_action(st)
 
-        # a = self.smooth_ucb_action(h)
-        depth_to_go = self.max_depth - depth
-        if update_tree:
-            a = self.smooth_ucb_action(h, depth_to_go=depth_to_go)
-        else:
-            a = self.avg_action(h)
 
-        r, sp = self.mdps[mdp_i].step(h[-1], a) #TODO: replace with progressive widening for state space
+        V_est = Qsta_est[a_star]
+        self.Wst[st] += 1
+        self.Wsta_br[st+(a_star,)] += 1
+        self.Vst[st] = self.Vst[st] + w*(V_est - self.Vst[st])/self.Wst[st]
 
-        R = r + self.gamma*self.simulate(h + (a,sp), mdp_i, depth + 1, w=w)
-        if update_tree and w>0:
-            self.Wh[h] += w
-            self.Wha[h+(a,)] += w
-            self.Qha[h+(a,)] = self.Qha[h+(a,)] + w*(R - self.Qha[h+(a,)])*1./self.Wha[h+(a,)]
-        return R
+        V_br_eps = Qsta_br_eps[a_eps_greedy]
+        return V_est, V_br_eps
 
-    # simulate a rollout from history h in mdp_i up to depth
-    # makes no assumptions on h being in the tree
-    def rollout(self, h, mdp_i, depth):
-        if depth >= self.max_depth:
-            return 0
-        if self.mdps[mdp_i].done(h[-1]):
-            return 0
+    def estimateQ(self, st, mdp_i, depth, c, w=1, update_tree=True):
+        Qsta_est = np.zeros(len(self.mdps[mdp_i].action_space(st[0])))
+        Qsta_br_eps = np.zeros(len(self.mdps[mdp_i].action_space(st[0])))
 
-        a = self.sample_rollout_action(h)
-        r, sp = self.mdps[mdp_i].step(h[-1], a)
-        return r + self.gamma*self.rollout(h + (a,sp), mdp_i, depth + 1)
+        for i,a in enumerate( self.mdps[mdp_i].action_space(st[0]) ):
+            if st + (a,) not in self.Wsta:
+                self.Wsta[st+(a,)] = 0
+                self.Wsta_br[st+(a,)] = 0
+                self.Qsta[st+(a,)] = 0
+
+            Qsta_est[i] = 0
+            Qsta_br_eps[i] = 0
+            for j in range(c):
+                r, sp = self.mdps[mdp_i].step(st[0], a) #TODO: replace with progressive widening for state space
+                V_est, V_br_eps = self.estimateV( (sp, st[1]+1), mdp_i, depth + 1,  self.c, w=w)
+                Qsta_est[i] += r + self.gamma*V_est
+                Qsta_br_eps[i] += r + self.gamma*V_br_eps
+
+            Qsta_est[i] = Qsta_est[i]*1.0/c
+            Qsta_br_eps[i] = Qsta_br_eps[i]*1.0/c
+
+            self.Wsta[st+(a,)] += 1
+            self.Qsta[st+(a,)] = self.Qsta[st+(a,)] + (w*Qsta_est[i] - self.Qsta[st+(a,)])*1./self.Wsta[st+(a,)]
+
+        return Qsta_est, Qsta_br_eps
 
     # the policy to use when performing rollouts
-    def sample_rollout_action(self, h):
+    def sample_rollout_action(self, st):
         # randomly sample action
-        return np.random.choice(self.mdps[0].action_space(h[-1]))
+        return np.random.choice(self.mdps[0].action_space(st[0]))
 
-    # choose an action at history h corresponding to the optimal UCB choice
-    def ucb_action(self, h, depth_to_go=1):
-        c = self.max_r*depth_to_go
-        best_a = -1
-        best_val = -np.inf
-        for a in self.mdps[0].action_space(h[-1]):
-            val = np.inf
-            if self.Wha[h+(a,)] != 0 and self.Wh[h] >= 1:
-                val = self.Qha[h+(a,)] + c * np.sqrt(np.log(self.Wh[h])/self.Wha[h+(a,)])
+    def eps_greedy_action(self, st, eps):
+        if np.random.rand() < eps:
+            return self.sample_rollout_action(st)
+        else:
+            return self.greedy_action(st)
 
-            if val > best_val:
-                best_val = val
-                best_a = a
-
-        return best_a
-
-    # choose an action at history h corresponding to the most visited
-    def robust_action(self, h, depth_to_go=1):
+    def robust_action(self, st):
         best_a = -1
         best_val = 0
-        if h not in self.Wh:
-            return self.sample_rollout_action(h)
+        if st not in self.Wst:
+            return self.sample_rollout_action(st)
 
-        for a in self.mdps[0].action_space(h[-1]):
-            val = self.Wha[h+(a,)]
+        for a in self.mdps[0].action_space(st[0]):
+            val = self.Wsta_br[st+(a,)]
 
             if val > best_val:
                 best_val = val
                 best_a = a
 
         if best_a == -1:
-            best_a = self.sample_rollout_action(h)
+            best_a = self.sample_rollout_action(st)
 
         return best_a
 
-    # choose an action at history h corresponding to the historical distribution of choice
+
+    def greedy_action(self, st):
+        best_a = -1
+        best_val = 0
+        if st not in self.Wst:
+            return self.sample_rollout_action(st)
+
+        for a in self.mdps[0].action_space(st[-1]):
+            val = self.Qsta[st+(a,)]
+
+            if val > best_val:
+                best_val = val
+                best_a = a
+
+        if best_a == -1:
+            best_a = self.sample_rollout_action(st)
+
+        return best_a
+
     def avg_action(self, h):
+        s = h[-1]
+        t = int(len(h)/2)
         actions = self.mdps[0].action_space(h[-1])
-        if h not in self.Wh:
+        if (s,t) not in self.Wst:
+            import pdb; pdb.set_trace()
             probs = np.ones(len(actions))
         else:
-            probs = np.array( [self.Wha[h+(a,)]*1. for a in actions] ) # TODO: see if this still works with Wha rather than Nha
+            probs = np.array( [self.Wsta_br[(s,t,a)]*1. for a in actions] )
         probs = probs/np.sum(probs)
         a = np.random.choice(actions, p=probs)
         return a
-
-    # perform an action at history h corresponding to a mixture of the optimal UCB action and the historical distribution
-    def smooth_ucb_action(self, h, depth_to_go=1):
-        z = np.random.rand()
-        best_a = -1
-        if z < self.eta_agent:
-            # return the action given by upper confidence bounds
-            return self.ucb_action(h, depth_to_go=depth_to_go)
-        else:
-            return self.avg_action(h)
-
-        return best_a

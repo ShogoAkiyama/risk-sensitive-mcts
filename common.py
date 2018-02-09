@@ -9,7 +9,7 @@ class Env(object):
     def rollout(self, n_rollouts=1, render=True):
         self.logger.clear()
         s0 = self.mdp.reset()
-        self.agent.MCTS(s0)
+        self.agent.plan(s0)
         for i in range(n_rollouts):
             # self.agent.reset()
             s0 = self.mdp.reset()
@@ -18,7 +18,7 @@ class Env(object):
             t = 0
             self.logger.init_episode()
             while (not self.mdp.done(s)) and t < self.agent.max_depth:
-                a = self.agent.ucb_action(h)
+                a = self.agent.avg_action(h)
                 #a = self.agent.action(s)
                 r,sp = self.mdp.step(s,a)
                 self.agent.observe(s,a,r,sp)
