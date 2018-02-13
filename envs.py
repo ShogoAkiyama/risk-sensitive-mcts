@@ -86,6 +86,51 @@ class NPullBandit(MDP):
         else:
             return [0]
 
+class TreatmentPlan(MDP):
+    def __init__(self, param=0):
+        self.param = param
+        self.allergies = np.array( [[1,0,0],
+                                    [0,1,0],
+                                    [0,0,1],
+                                    [0,0,0]] )
+        self.drug_transitions = np.array([ [[0.0, 0.4, 0.6],
+                                            [0.0, 0.5, 0.5],
+                                            [0.0, 0.8, 0.2]],
+                                           [[0.5, 0.5, 0.0],
+                                            [0.4, 0.2, 0.4],
+                                            [0.2, 0.8, 0.0]] ])
+        self.gamma = 1.0
+
+    def reset(self):
+        return 0
+
+    # return a list of states and transition probabilities, as NP arrays
+    def transition_func(self, s, a):
+        sp_list = np.maximum( np.minimum(s + np.arange(-1, 1), 4), 0 )
+        sp_dist = self.drug_transitions[self.allergies[self.param, a], a]
+        return sp_list, sp_dist
+
+    # return the reward r(s,a,sp)
+    def reward_func(self, s, a, sp):
+        rewards = [-1.0, -0.2, -0.2, 0.5]
+        #rewards =  [0, 2.0, 1.5, 1.0, 0.9, 0.5, 0.0]
+        return rewards[sp]
+
+    # return whether or not the current state is a terminal state
+    def done(self, s):
+        return False
+
+    # return a list of all the states of the MDP
+    def state_space(self):
+        return np.arange(7)
+
+    # return a list of all the actions in the MDP
+    def action_space(self,s):
+        if s == 0:
+            return np.arange(4)
+        else:
+            return [0]
+
 class LavaGoalOneD(MDP):
     def __init__(self, param=0):
         self.param = param
