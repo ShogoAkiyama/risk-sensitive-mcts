@@ -1,4 +1,4 @@
-# risk-sensitive-mcts
+# RAMCP
 
 A Monte-Carlo Tree Search Algorithm that provides tunable conservatism against uncertainty over transition models.
 

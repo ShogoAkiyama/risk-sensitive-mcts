@@ -7,7 +7,7 @@ import numpy as np
 from copy import deepcopy
 
 class RiskAverseSparseSampler(Agent):
-    def __init__(self, mdps, belief, max_depth=1, max_r=1, alpha=1.0, n_iter=200, K=20, n_burn_in=0, c=10):
+    def __init__(self, mdps, belief, max_depth=1, alpha=1.0, n_iter=200, K=20, n_burn_in=0, c=10):
         super(RiskAverseSparseSampler, self).__init__()
         self.mdps = deepcopy(mdps) # identical MDPS, with different transition distributions corresponding to the support of the belief
         self.n_mdps = len(mdps)
@@ -19,7 +19,6 @@ class RiskAverseSparseSampler(Agent):
 
         self.adversarial_belief = np.array(belief) # current best response to the avg performance of the MCTS policy
         self.adversarial_belief_avg = np.array(belief) # avg of past best responses
-        self.adv_mixed_strategy = np.array(belief)
 
         self.gamma = mdps[0].gamma # discount factor extracted from MDP 0
 
@@ -42,10 +41,6 @@ class RiskAverseSparseSampler(Agent):
 
         self.c = c # width of sampling at each transition node per model
 
-        # mixing factors between best response and avg policy.
-        self.eta = 1.0 # smoothing of distribution updates
-        self.eta_agent = 1.0 # the changes to the UCB policy are fairly smooth, so perhaps this is not necessary / can be higher?
-
         self.alpha = alpha # CVaR alpha
         self.K = K # number of tree updates and model rollouts per adversarial belief update.
 
@@ -63,8 +58,7 @@ class RiskAverseSparseSampler(Agent):
     def reset_tree(self):
         self.N_belief_updates = 1
         self.adversarial_belief = np.array(self.orig_belief)
-        self.adv_mixed_strategy = np.array(self.orig_belief)
-
+        
         self.Wh = {}
         self.Vh = {}
         self.Wha = {}
@@ -108,7 +102,6 @@ class RiskAverseSparseSampler(Agent):
     # build the tree from state s
     def SparseSampling(self, s):
         # reset tree from previous computation?
-        self.adv_dists = []
         self.adv_brs = []
         self.adv_avg = []
         self.agent_est_value = []
@@ -119,24 +112,20 @@ class RiskAverseSparseSampler(Agent):
         self.reset_tree()
 
         for itr in range(self.n_iter):
-            #self.model_counts = np.zeros(self.n_mdps) # clear before every iteration
-            self.epsilon = 0.0 #0.9**(itr*50.0/self.n_iter)
+            self.epsilon = 0.0
             for k in range(self.K):
-                rng_state = np.random.get_state()
+                rng_state = np.random.get_state() # common random numbers
                 for mdp_i in range(self.n_mdps):
                     np.random.set_state(rng_state)
-                    #w = self.adv_mixed_strategy[mdp_i]*self.n_mdps # b_adv(i)/p(i), here p(i) = 1/n_mdps
-                    # playing the best response means the value estimates need not converge
-                    #w = self.adversarial_belief_avg[mdp_i]*self.n_mdps
+                    
                     w = self.adversarial_belief[mdp_i]*self.n_mdps
-                    V_est, V_br_eps = self.estimateV( (s,), mdp_i, 0, self.c, w=w ) # simulate on that MDP, growing the tree in the process
+                    V_est, V_br_eps = self.estimateV( (s,), mdp_i, 0, self.c, w=w ) 
 
                     self.model_counts[mdp_i] += 1
                     self.model_values[mdp_i] += (V_br_eps - self.model_values[mdp_i])/self.model_counts[mdp_i]
 
             # record current statistics for stats purposes
             self.adv_brs.append(deepcopy(self.adversarial_belief))
-            self.adv_dists.append(deepcopy(self.adv_mixed_strategy))
             self.adv_avg.append(deepcopy(self.adversarial_belief_avg))
             qvals = [self.Qha[(s,a)] for a in self.mdps[0].action_space(s)]
             self.agent_est_value.append(self.Vh[(s,)])
@@ -159,28 +148,16 @@ class RiskAverseSparseSampler(Agent):
         A = np.vstack([A1,A2])
         b = np.vstack([b1, b2])
 
-        # do we augment this with "lower confidence bounds?"
-        # should we choose adversarial belief assuming the policy will do better or worse than the mean so far?
-        # assuming the worst (i.e. optimism wrt the adversary) ensures exploration
         c = np.array(self.model_values)
-        # for i in range(self.n_mdps):
-        #     if self.model_counts[i] != 0:
-        #         c[i] -= self.c * np.sqrt(np.log(np.sum(self.model_counts))/self.model_counts[i])
-        #     else:
-        #         c[i] = -self.max_r
 
         # res = belief that minimizes the cost given a lower bound on the expected avg performance of the agent
         res = optimize.linprog(c, A, b, Aeq, beq)
 
         # set the adversarial belief
         self.adversarial_belief = res.x
-
-        # compute and set the mixed strategy
-        self.adv_mixed_strategy = (1-self.eta)*self.adversarial_belief_avg + self.eta*res.x
-
+        
         self.N_belief_updates += 1
-        # self.adversarial_belief_avg += (res.x - self.adversarial_belief_avg)/self.N_belief_updates
-        self.adversarial_belief_avg += (self.adv_mixed_strategy - self.adversarial_belief_avg)/self.N_belief_updates
+        self.adversarial_belief_avg += (self.adversarial_belief - self.adversarial_belief_avg)/self.N_belief_updates
 
     # simulate a rollout under mdp_i up to depth, adding a node and updating counts if update_tree=True
     # takes a mixed strategy when choosing actions in the constructed tree
@@ -202,7 +179,7 @@ class RiskAverseSparseSampler(Agent):
 
 
         V_est = Qha_est[a_star]
-        # if w > 0:
+
         self.Wh[h] += 1
         self.Wha_br[h+(a_star,)] += 1
         self.Vh[h] = self.Vh[h] + (w*V_est - self.Vh[h])*1.0/self.Wh[h]
@@ -223,7 +200,7 @@ class RiskAverseSparseSampler(Agent):
             Qha_est[i] = 0
             Qha_br_eps[i] = 0
             for j in range(c):
-                r, sp = self.mdps[mdp_i].step(h[-1], a) #TODO: replace with progressive widening for state space
+                r, sp = self.mdps[mdp_i].step(h[-1], a)
                 V_est, V_br_eps = self.estimateV(h + (a,sp), mdp_i, depth + 1,  self.c, w=w)
                 Qha_est[i] += r + self.gamma*V_est
                 Qha_br_eps[i] += r + self.gamma*V_br_eps
@@ -236,14 +213,13 @@ class RiskAverseSparseSampler(Agent):
 
         return Qha_est, Qha_br_eps
 
-    # the policy to use when performing rollouts
-    def sample_rollout_action(self, h):
+    def random_action(self, h):
         # randomly sample action
         return np.random.choice(self.mdps[0].action_space(h[-1]))
 
     def eps_greedy_action(self, h, eps):
         if np.random.rand() < eps:
-            return self.sample_rollout_action(h)
+            return self.random_action(h)
         else:
             return self.greedy_action(h)
 
@@ -251,7 +227,7 @@ class RiskAverseSparseSampler(Agent):
         best_a = -1
         best_val = 0
         if h not in self.Wh:
-            return self.sample_rollout_action(h)
+            return self.random_action(h)
 
         for a in self.mdps[0].action_space(h[-1]):
             val = self.Wha_star[h+(a,)]
@@ -261,16 +237,15 @@ class RiskAverseSparseSampler(Agent):
                 best_a = a
 
         if best_a == -1:
-            best_a = self.sample_rollout_action(h)
+            best_a = self.random_action(h)
 
         return best_a
-
 
     def greedy_action(self, h):
         best_a = -1
         best_val = 0
         if h not in self.Wh:
-            return self.sample_rollout_action(h)
+            return self.random_action(h)
 
         for a in self.mdps[0].action_space(h[-1]):
             val = self.Qha[h+(a,)]
@@ -280,7 +255,7 @@ class RiskAverseSparseSampler(Agent):
                 best_a = a
 
         if best_a == -1:
-            best_a = self.sample_rollout_action(h)
+            best_a = self.random_action(h)
 
         return best_a
 
